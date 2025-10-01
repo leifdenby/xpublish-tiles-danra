@@ -19,4 +19,4 @@ RUN uv add aiohttp Pillow
 RUN uv add pytest
 RUN uv add arraylake
 
-ENTRYPOINT ["uv", "run", "main.py", "--dataset", "zarr:///data.zarr"
+ENTRYPOINT ["uv", "run", "main.py", "--dataset", "zarr:///data.zarr"]

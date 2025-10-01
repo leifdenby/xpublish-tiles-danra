@@ -533,6 +533,7 @@ def main():
             )
         else:
             ds = get_dataset_for_name(dataset_name, args.branch, args.group, args.cache)
+        print(ds)
         rest = xpublish.SingleDatasetRest(
             ds,
             plugins={"tiles": TilesPlugin(), "wms": WMSPlugin()},
