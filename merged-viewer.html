@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Unified Viewer — WMS & Tiles (ohm.mi.dk)</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
+  <style>
+    :root {
+      --panel-bg: rgba(255,255,255,0.96);
+      --border: #ccc;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji", "Segoe UI Symbol";
+    }
+    html, body { height: 100%; }
+    body { margin:0; padding:0; font-family: var(--font); }
+    #map { position:absolute; inset:0; }
+    .panel {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 6px 10px;
+      align-items: center;
+    }
+    .panel label { font-size: 12px; color: #333; }
+    .panel input[type="datetime-local"],
+    .panel input[type="text"],
+    .panel input[type="number"],
+    .panel select,
+    .panel button {
+      font-size: 12px;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: white;
+    }
+    .row-span-2 { grid-row: span 2; }
+    .col-span-2 { grid-column: 1 / -1; }
+    .btn {
+      cursor: pointer;
+      user-select: none;
+    }
+    .btn:hover { background: #f5f5f5; }
+    .right-panel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .hint { font-size: 11px; color: #666; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="panel" id="control-panel">
+    <label for="backend">Backend</label>
+    <select id="backend">
+      <option value="wms">WMS</option>
+      <option value="tiles">Tiles</option>
+    </select>
+
+    <label for="variable">Variable</label>
+    <select id="variable">
+      <option value="t2m" selected>t2m (temperature @ 2m)</option>
+      <option value="u10m">u10m (zonal wind @ 10m)</option>
+      <option value="v10m">v10m (meridional wind @ 10m)</option>
+    </select>
+
+    <label for="colormap">Colormap</label>
+    <select id="colormap">
+      <option value="viridis" selected>viridis</option>
+      <option value="plasma">plasma</option>
+      <option value="inferno">inferno</option>
+      <option value="magma">magma</option>
+      <option value="cividis">cividis</option>
+      <option value="hsv">hsv</option>
+    </select>
+
+    <label for="vmin">vmin</label>
+    <input id="vmin" type="number" step="any" value="280" />
+
+    <label for="vmax">vmax</label>
+    <input id="vmax" type="number" step="any" value="300" />
+
+    <label for="time">valid_time</label>
+    <input id="time" type="datetime-local" />
+
+    <div class="col-span-2">
+      <button id="back3" class="btn">&larr; 3h</button>
+      <button id="fwd3" class="btn">3h &rarr;</button>
+      <span class="hint">Times use your local time, aligned to 3-hour steps.</span>
+    </div>
+
+    <label for="opacity">Opacity</label>
+    <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.6" />
+  </div>
+
+  <div class="right-panel">
+    <button id="tile-boundaries" class="btn">Show tile boundaries</button>
+  </div>
+
+  <script>
+    // Mapbox token (replace if needed)
+    mapboxgl.accessToken = 'pk.eyJ1IjoibXBpYW5udWNjaSIsImEiOiJja3FiZHg2emEwMGNjMndvY2F6OTdpcWN3In0.rjzyODwHa4rsEy2CH7IDwQ';
+
+    // Host & endpoints
+    const HOST = 'ohm.dmi.dk:8080';
+
+    // Helpers for local-time-safe parsing/formatting
+    const pad = (n) => String(n).padStart(2, '0');
+
+    // Parse "YYYY-MM-DDTHH:mm" or "YYYY-MM-DDTHH:mm:ss" as LOCAL time
+    const parseLocal = (s) => {
+      const [datePart, timePart = "00:00:00"] = s.split('T');
+      const [y, m, d] = datePart.split('-').map(Number);
+      const [hh, mm, ss = 0] = timePart.split(':').map(Number);
+      return new Date(y, (m - 1), d, hh, mm, ss, 0); // Local Date
+    };
+
+    // Format to "YYYY-MM-DDTHH:mm" for input
+    const fmtLocalMinute = (d) =>
+      `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    // Format to "YYYY-MM-DDTHH:mm:ss" for server params
+    const fmtLocalSecond = (d) =>
+      `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+    // Align to nearest previous 3h bin and then shift by delta (+/-3)
+    const align3h = (d, deltaHours) => {
+      const h = d.getHours();
+      const base = Math.floor(h / 3) * 3 + deltaHours;
+      const out = new Date(d);
+      out.setHours(base, 0, 0, 0);
+      return out;
+    };
+
+    // Default state
+    let state = {
+      backend: 'wms',          // 'wms' | 'tiles'
+      variable: 't2m',
+      colormap: 'viridis',
+      vmin: 280,
+      vmax: 300,
+      valid_time: '1990-09-01T03:00:00'  // local canonical (with seconds for requests)
+    };
+
+    // DOM
+    const elBackend  = document.getElementById('backend');
+    const elVar      = document.getElementById('variable');
+    const elCmap     = document.getElementById('colormap');
+    const elVmin     = document.getElementById('vmin');
+    const elVmax     = document.getElementById('vmax');
+    const elTime     = document.getElementById('time');
+    const elBack3    = document.getElementById('back3');
+    const elFwd3     = document.getElementById('fwd3');
+    const elOpacity  = document.getElementById('opacity');
+    const elTileBtn  = document.getElementById('tile-boundaries');
+
+    // Initialize input values
+    const initTime = () => {
+      // If empty, initialize to current local time aligned to previous 3h
+      // const now = new Date();
+      // const prev = align3h(now, 0); // align to prev multiple-of-3
+      // state.valid_time = fmtLocalSecond(prev);
+      // elTime.value = fmtLocalMinute(prev);
+      // if empty, initialize to state to valid_time (1990-09-01T03:00:00)
+      elTime.value = state.valid_time.slice(0, 16);
+    };
+    initTime();
+
+    // URL builders
+    const wmsTiles = (tStrSec, variable, vmin, vmax, colormap) =>
+      `http://${HOST}/wms?service=WMS&version=1.3.0&request=GetMap` +
+      `&layers=${encodeURIComponent(variable)}` +
+      `&styles=${encodeURIComponent('raster/' + colormap)}` +
+      `&colorscalerange=${encodeURIComponent(vmin + ',' + vmax)}` +
+      `&width=256&height=256` +
+      `&time=${encodeURIComponent(tStrSec)}` +
+      `&crs=EPSG:3857&bbox={bbox-epsg-3857}`;
+
+    const tileJSONUrl = (tStrSec, variable, vmin, vmax, colormap) =>
+      `http://${HOST}/tiles/WebMercatorQuad/tilejson.json` +
+      `?variables=${encodeURIComponent(variable)}` +
+      `&width=512&height=512` +
+      `&style=${encodeURIComponent('raster/' + colormap)}` +
+      `&colorscalerange=${encodeURIComponent(vmin + ',' + vmax)}` +
+      `&valid_time=${encodeURIComponent(tStrSec)}`;
+
+    // Map
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/light-v11',
+      center: [12.5683, 55.6761],
+      zoom: 4
+    });
+
+    // Source/layer ids
+    const SRC_ID = 'ohm-source';
+    const LYR_ID = 'ohm-layer';
+
+    const addOrUpdateLayer = () => {
+      const src = map.getSource(SRC_ID);
+      const layer = map.getLayer(LYR_ID);
+
+      const url = (state.backend === 'wms')
+        ? wmsTiles(state.valid_time, state.variable, state.vmin, state.vmax, state.colormap)
+        : tileJSONUrl(state.valid_time, state.variable, state.vmin, state.vmax, state.colormap);
+
+      if (!src) {
+        // create source
+        if (state.backend === 'wms') {
+          map.addSource(SRC_ID, { type: 'raster', tiles: [url], tileSize: 256 });
+        } else {
+          map.addSource(SRC_ID, { type: 'raster', url: url });
+        }
+      } else {
+        // update source
+        if (state.backend === 'wms') {
+          if (src.setTiles) src.setTiles([url]);
+          else {
+            map.removeSource(SRC_ID);
+            map.addSource(SRC_ID, { type: 'raster', tiles: [url], tileSize: 256 });
+          }
+        } else {
+          if (src.setUrl) src.setUrl(url);
+          else {
+            map.removeSource(SRC_ID);
+            map.addSource(SRC_ID, { type: 'raster', url: url });
+          }
+        }
+      }
+
+      if (!layer) {
+        map.addLayer({
+          id: LYR_ID,
+          type: 'raster',
+          source: SRC_ID,
+          paint: { 'raster-opacity': parseFloat(elOpacity.value) }
+        });
+      } else {
+        map.setPaintProperty(LYR_ID, 'raster-opacity', parseFloat(elOpacity.value));
+      }
+
+      map.triggerRepaint();
+    };
+
+    const removeLayerAndSource = () => {
+      if (map.getLayer(LYR_ID)) map.removeLayer(LYR_ID);
+      if (map.getSource(SRC_ID)) map.removeSource(SRC_ID);
+    };
+
+    // Map setup
+    map.on('load', () => {
+      map.setFog({});
+      addOrUpdateLayer();
+    });
+
+    // UI wiring
+    const applyVarDefaults = () => {
+      // Simple defaults per variable
+      if (state.variable === 't2m') {
+        state.vmin = 280; state.vmax = 300;
+      } else {
+        state.vmin = -10; state.vmax = 10;
+      }
+      elVmin.value = state.vmin;
+      elVmax.value = state.vmax;
+    };
+
+    elBackend.addEventListener('change', (e) => {
+      state.backend = e.target.value;
+      removeLayerAndSource();
+      addOrUpdateLayer();
+    });
+
+    elVar.addEventListener('change', (e) => {
+      state.variable = e.target.value;
+      applyVarDefaults();
+      addOrUpdateLayer();
+    });
+
+    elCmap.addEventListener('change', (e) => {
+      state.colormap = e.target.value;
+      addOrUpdateLayer();
+    });
+
+    elVmin.addEventListener('change', (e) => {
+      const v = parseFloat(e.target.value);
+      if (!Number.isNaN(v)) state.vmin = v;
+      addOrUpdateLayer();
+    });
+
+    elVmax.addEventListener('change', (e) => {
+      const v = parseFloat(e.target.value);
+      if (!Number.isNaN(v)) state.vmax = v;
+      addOrUpdateLayer();
+    });
+
+    elOpacity.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      if (map.getLayer(LYR_ID)) {
+        map.setPaintProperty(LYR_ID, 'raster-opacity', v);
+      }
+    });
+
+    elTime.addEventListener('change', (e) => {
+      // value is "YYYY-MM-DDTHH:mm" local
+      const val = e.target.value;
+      const withSec = val.includes(':') && val.length === 16 ? (val + ':00') : val;
+      state.valid_time = withSec;
+      addOrUpdateLayer();
+    });
+
+    elBack3.addEventListener('click', () => {
+      const d = parseLocal(state.valid_time);
+      const prev = align3h(d, -3);
+      state.valid_time = fmtLocalSecond(prev);
+      elTime.value = fmtLocalMinute(prev);
+      addOrUpdateLayer();
+    });
+
+    elFwd3.addEventListener('click', () => {
+      const d = parseLocal(state.valid_time);
+      const next = align3h(d, +3);
+      state.valid_time = fmtLocalSecond(next);
+      elTime.value = fmtLocalMinute(next);
+      addOrUpdateLayer();
+    });
+
+    // Tile boundaries toggle
+    let showTiles = false;
+    elTileBtn.addEventListener('click', () => {
+      showTiles = !showTiles;
+      map.showTileBoundaries = showTiles;
+      elTileBtn.textContent = showTiles ? 'Hide tile boundaries' : 'Show tile boundaries';
+    });
+
+    // Set defaults once variable changes programmatically
+    applyVarDefaults();
+
+    // Click popup (debug)
+    map.on('style.load', function () {
+      map.on('click', function (e) {
+        const c = e.lngLat;
+        new mapboxgl.Popup()
+          .setLngLat(c)
+          .setHTML('Clicked: <br/>' + c.lng.toFixed(4) + ', ' + c.lat.toFixed(4))
+          .addTo(map);
+      });
+    });
+  </script>
+</body>
+</html>

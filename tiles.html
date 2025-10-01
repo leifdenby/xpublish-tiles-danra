@@ -58,7 +58,7 @@ body { margin: 0; padding: 0; }
         colormap = "viridis"
 
         const wmsSourceUrl = (colormap, valid_time) => 
-            `http://localhost:8080/tiles/WebMercatorQuad/tilejson.json?variables=t2m&width=512&height=512&style=raster/${colormap}&colorscalerange=250,283&valid_time=${valid_time}`;
+            `http://ohm.dmi.dk:8080/tiles/WebMercatorQuad/tilejson.json?variables=t2m&width=512&height=512&style=raster/${colormap}&colorscalerange=250,283&valid_time=${valid_time}`;
 
         map.addSource('wms-test-source', {
             'type': 'raster',
