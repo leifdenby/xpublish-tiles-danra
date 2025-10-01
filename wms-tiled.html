@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>WMS - xpublish-tiles</title>
+<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
+<style>
+body { margin: 0; padding: 0; }
+#map { position: absolute; top: 0; bottom: 0; width: 100%; }
+#time-selector { top: 10px; left: 10px; z-index: 1000; padding: 8px 12px; background: white; border: 1px solid #ccc; border-radius: 4px; font-family: Arial, sans-serif; font-size: 12px; }
+#time-controls { position: absolute; top: 10px; z-index: 1000; display: inline-flex; }
+#time-controls button { margin-left: 5px; padding: 8px 12px; background: white; border: 1px solid #ccc; border-radius: 4px; font-family: Arial, sans-serif; font-size: 12px; cursor: pointer; }
+#time-controls button:hover { background: #f0f0f0; }
+#var-selector { margin-left: 10px; padding: 8px 12px; background: white; border: 1px solid #ccc; border-radius: 4px; font-family: Arial, sans-serif; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<span>hi</span>
+<div id="time-controls">
+    <input type="datetime-local" id="time-selector" />
+    <button id="step-backward">< 3hr</button>
+    <button id="step-forward">3hr ></button>
+    <select id="var-selector">
+        <option value="t2m">t2m</option>
+        <option value="u10m">u10m</option>
+        <option value="v10m">v10m</option>
+    </select>
+</div>
+<script>
+	// TO MAKE THE MAP APPEAR YOU MUST
+	// ADD YOUR ACCESS TOKEN FROM
+	// https://account.mapbox.com
+	mapboxgl.accessToken = 'pk.eyJ1IjoibXBpYW5udWNjaSIsImEiOiJja3FiZHg2emEwMGNjMndvY2F6OTdpcWN3In0.rjzyODwHa4rsEy2CH7IDwQ';
+    const map = new mapboxgl.Map({
+        container: 'map',
+        // Choose from Mapbox's core styles, or make your own style with Mapbox Studio
+        style: 'mapbox://styles/mapbox/light-v11',
+        zoom: 4,
+        // center on Denmark
+        center: [12.5683, 55.6761],
+        // center: [-71.0367, 42.3739],
+        //center: [-61.5, -4.5],
+        // transformRequest: (url, resourceType) => {
+        //     if (url.includes('localhost')) {
+        //         return {
+        //             url: url,
+        //             headers: { 'Authorization': 'Basic dGVzdF91c2VyOnRlc3RfcGFzcw==' },
+        //         };
+        //     }
+        // }
+    });
+
+    map.on('load', () => {
+  map.setFog({});
+
+  // --- helpers (local-time safe) ---
+  const pad = (n) => String(n).padStart(2, '0');
+
+  // Parse "YYYY-MM-DDTHH:mm" or "YYYY-MM-DDTHH:mm:ss" as LOCAL time
+  const parseLocal = (s) => {
+    const [datePart, timePart = "00:00:00"] = s.split('T');
+    const [y, m, d] = datePart.split('-').map(Number);
+    const [hh, mm, ss = 0] = timePart.split(':').map(Number);
+    return new Date(y, (m - 1), d, hh, mm, ss, 0); // Local Date
+  };
+
+  // Format to "YYYY-MM-DDTHH:mm" for the input
+  const fmtLocalMinute = (d) =>
+    `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  // Format to "YYYY-MM-DDTHH:mm:ss" for the WMS time= param
+  const fmtLocalSecond = (d) =>
+    `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+  // Align a Date to the previous multiple-of-3 hour (or next with +3)
+  const align3h = (d, deltaHours) => {
+    const h = d.getHours();
+    const base = Math.floor(h / 3) * 3 + deltaHours; // ±3 from the aligned bin
+    const out = new Date(d);
+    out.setHours(base, 0, 0, 0); // LOCAL hours/min/sec/ms
+    return out;
+  };
+
+  // --- initial state (treat as local time string) ---
+  let valid_time = "1990-09-01T03:00:00";
+  let var_name = "t2m"; // Default variable name
+
+  const timeSelector = document.getElementById('time-selector');
+  timeSelector.value = valid_time.slice(0, 16); // input wants minute precision
+
+  const varSelector = document.getElementById('var-selector');
+
+  const wmsSourceUrl = (tStrSec, variable) =>
+    `http://localhost:8080/wms?service=WMS&version=1.3.0&request=GetMap&layers=${variable}&styles=raster/viridis&colorscalerange=280,300&width=256&height=256&time=${tStrSec}&crs=EPSG:3857&bbox={bbox-epsg-3857}`;
+
+  map.addSource('wms-test-source', {
+    type: 'raster',
+    tiles: [wmsSourceUrl(valid_time, var_name)],
+    tileSize: 256
+  });
+
+  map.addLayer({
+    id: 'wms-test-layer',
+    type: 'raster',
+    source: 'wms-test-source',
+    paint: { 'raster-opacity': 0.5 }
+  });
+
+  const updateTime = (newLocalTimeStr) => {
+    // newLocalTimeStr should be "YYYY-MM-DDTHH:mm[:ss]" in LOCAL time
+    const d = parseLocal(newLocalTimeStr);
+    const tStrMin = fmtLocalMinute(d);
+    const tStrSec = fmtLocalSecond(d);
+    valid_time = tStrSec;              // keep canonical with seconds
+    timeSelector.value = tStrMin;      // reflect in input (no seconds)
+
+    const source = map.getSource("wms-test-source");
+    if (source) {
+      source.setTiles([wmsSourceUrl(tStrSec, var_name)]);
+      map.triggerRepaint();
+    }
+  };
+
+  // Input change (value is local without timezone)
+  timeSelector.addEventListener('change', (event) => {
+    const val = event.target.value;    // "YYYY-MM-DDTHH:mm"
+    updateTime(val + ":00");           // add seconds
+  });
+
+  // Update variable on dropdown change
+  varSelector.addEventListener('change', (event) => {
+    var_name = event.target.value; // Update variable name
+    const source = map.getSource("wms-test-source");
+    if (source) {
+      source.setTiles([wmsSourceUrl(valid_time, var_name)]);
+      map.triggerRepaint();
+    }
+  });
+
+  // Step buttons (use LOCAL hours, no UTC calls, no toISOString)
+  const stepBackward = document.getElementById('step-backward');
+  const stepForward = document.getElementById('step-forward');
+
+  stepBackward.addEventListener('click', () => {
+    const d = parseLocal(valid_time);
+    const prev = align3h(d, -3);       // previous 3-hour bin
+    updateTime(fmtLocalSecond(prev));
+  });
+
+  stepForward.addEventListener('click', () => {
+    const d = parseLocal(valid_time);
+    const next = align3h(d, +3);       // next 3-hour bin
+    updateTime(fmtLocalSecond(next));
+  });
+});
+
+    map.on('style.load', function() {
+  map.on('click', function(e) {
+    var coordinates = e.lngLat;
+    new mapboxgl.Popup()
+      .setLngLat(coordinates)
+      .setHTML('you clicked here: <br/>' + coordinates)
+      .addTo(map);
+  });
+});
+</script>
+
+</body>
+</html>

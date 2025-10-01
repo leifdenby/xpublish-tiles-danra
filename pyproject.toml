@@ -1,0 +1,18 @@
+[project]
+name = "xpub-danra"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.12.15",
+    "arraylake>=0.24.1",
+    "dask>=2025.9.1",
+    "ipdb>=0.13.13",
+    "loguru>=0.7.3",
+    "matplotlib>=3.10.6",
+    "pillow>=11.3.0",
+    "pytest>=8.4.2",
+    "s3fs>=2025.9.0",
+    "xpublish-tiles>=0.2.1",
+]
