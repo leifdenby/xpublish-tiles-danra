@@ -523,6 +523,7 @@ def main():
 
     xr.set_options(keep_attrs=True)
     if args.where == "local":
+        print(f"Opening {dataset_name}")
         if dataset_name.startswith("zarr://"):
             zarrpath = dataset_name.removeprefix("zarr://")
             ds = xr.open_zarr(

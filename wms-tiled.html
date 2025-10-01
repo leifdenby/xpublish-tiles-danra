@@ -94,7 +94,7 @@ body { margin: 0; padding: 0; }
   const varSelector = document.getElementById('var-selector');
 
   const wmsSourceUrl = (tStrSec, variable) =>
-    `http://localhost:8080/wms?service=WMS&version=1.3.0&request=GetMap&layers=${variable}&styles=raster/viridis&colorscalerange=280,300&width=256&height=256&time=${tStrSec}&crs=EPSG:3857&bbox={bbox-epsg-3857}`;
+    `http://ohm.dmi.dk:8080/wms?service=WMS&version=1.3.0&request=GetMap&layers=${variable}&styles=raster/viridis&colorscalerange=280,300&width=256&height=256&time=${tStrSec}&crs=EPSG:3857&bbox={bbox-epsg-3857}`;
 
   map.addSource('wms-test-source', {
     type: 'raster',
