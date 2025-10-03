@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Unified Viewer — WMS & Tiles (ohm.mi.dk)</title>
+  <title>DINI (most recent forecast)</title>
   <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
@@ -122,7 +122,7 @@
     mapboxgl.accessToken = 'pk.eyJ1IjoibXBpYW5udWNjaSIsImEiOiJja3FiZHg2emEwMGNjMndvY2F6OTdpcWN3In0.rjzyODwHa4rsEy2CH7IDwQ';
 
     // Host & endpoints
-    const HOST = 'ohm.dmi.dk:8080';
+    const HOST = 'dini-to-zarr.dmidev.org:8080';
 
     // Helpers for local-time-safe parsing/formatting
     const pad = (n) => String(n).padStart(2, '0');
@@ -151,6 +151,10 @@
       out.setHours(base, 0, 0, 0);
       return out;
     };
+    
+    // compute default valid_time as nearest past 3h aligned local time
+    const now = new Date();
+    const defaultValidTime = align3h(now, 0);
 
     // Default state
     let state = {
@@ -159,7 +163,7 @@
       colormap: 'viridis',
       vmin: 280,
       vmax: 300,
-      valid_time: '1990-09-01T03:00:00'  // local canonical (with seconds for requests)
+      valid_time: fmtLocalSecond(defaultValidTime) // "YYYY-MM-DDTHH:mm:ss"
     };
 
     // DOM
@@ -278,11 +282,17 @@
       // Simple defaults per variable
       if (state.variable === 't2m') {
         state.vmin = 280; state.vmax = 300;
+        state.colormap = 'viridis';
       } else {
         state.vmin = -10; state.vmax = 10;
+        state.colormap = 'bwr';
       }
       elVmin.value = state.vmin;
       elVmax.value = state.vmax;
+
+      // Update colormap dropdown
+      elCmap.value = state.colormap;
+      elCmap.selectedIndex = [...elCmap.options].findIndex(option => option.value === state.colormap);
     };
 
     elBackend.addEventListener('change', (e) => {

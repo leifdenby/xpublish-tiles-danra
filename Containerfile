@@ -1,5 +1,6 @@
 # use osgeo/proj base image
-FROM dockerhub.dmi.dk/osgeo/proj:latest
+# FROM dockerhub.dmi.dk/osgeo/proj:latest
+FROM osgeo/proj:latest
 
 # set working directory
 WORKDIR /app
