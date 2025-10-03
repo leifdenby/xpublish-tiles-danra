@@ -12,7 +12,7 @@ podman run --rm -it \
   
 
 # backend 
-docker run --rm -it -v /tmp/dini-recent/single_levels.zarr/:/data.zarr:ro -p 8080:8080 xpub-dini:latest
+docker run --rm -it -v /tmp/dini-recent/single_levels.zarr/:/data.zarr:ro --name xpub-dini -p 8080:8080 xpub-dini:latest
 
 # frontend
 sudo python3 -c "import http.server, socketserver; http.server.SimpleHTTPRequestHandler.extensions_map[''] = 'text/html'; http.server.SimpleHTTPRequestHandler.directory='.'; socketserver.TCPServer(('',80), http.server.SimpleHTTPRequestHandler).serve_forever()"

@@ -452,52 +452,6 @@ def main():
         help="Dataset to serve (default: global). Options: global, air, hrrr, para, eu3035, ifs, curvilinear, sentinel, global-6km, xarray://<tutorial_name> (loads xarray tutorial dataset), zarr:///path/to/zarr/store (loads standard Zarr store, use --group for groups), icechunk:///path/to/repo (loads Icechunk repository, use --group for groups), local://<dataset_name> (shorthand for icechunk:///tmp/tiles-icechunk --group <dataset_name>), or an arraylake dataset name",
     )
     parser.add_argument(
-        "--branch",
-        type=str,
-        default="main",
-        help="Branch to use for Arraylake (default: main). ",
-    )
-    parser.add_argument(
-        "--group",
-        type=str,
-        default="",
-        help="Group to use for Arraylake, Zarr, or Icechunk datasets (default: '').",
-    )
-    parser.add_argument(
-        "--cache",
-        action="store_true",
-        default=True,
-        help="Enable the icechunk cache for Arraylake datasets (default: True)",
-    )
-    parser.add_argument(
-        "--bench",
-        action="store_true",
-        help="Run benchmark requests with the specified dataset",
-    )
-    parser.add_argument(
-        "--spy",
-        action="store_true",
-        help="Run benchmark requests with the specified dataset (alias for --bench)",
-    )
-    parser.add_argument(
-        "--bench-suite",
-        action="store_true",
-        help="Run benchmarks for all local datasets and tabulate results",
-    )
-    parser.add_argument(
-        "--concurrency",
-        type=int,
-        default=12,
-        help="Number of concurrent requests for benchmarking (default: 12)",
-    )
-    parser.add_argument(
-        "--where",
-        type=str,
-        choices=["local", "local-booth", "arraylake-prod", "arraylake-dev"],
-        default="local",
-        help="Where to run benchmark requests: 'local' for localhost (starts server), 'local-booth' for localhost (no server), 'arraylake-prod' for production (earthmover.io), or 'arraylake-dev' for development (earthmover.dev) (default: local)",
-    )
-    parser.add_argument(
         "--log-level",
         type=str.lower,
         choices=["debug", "info", "warning", "error"],
@@ -510,90 +464,42 @@ def main():
     log_level = getattr(logging, args.log_level.upper())
     setup_logging(log_level)
 
-    # Check if we're running bench-suite mode
-    if args.bench_suite:
-        run_bench_suite(args)
-        return
-
     # Determine dataset to use and benchmarking mode
     dataset_name = args.dataset
-    benchmarking = args.bench or args.spy
 
     # Load dataset and setup server
 
     xr.set_options(keep_attrs=True)
-    if args.where == "local":
-        print(f"Opening {dataset_name}")
-        if dataset_name.startswith("zarr://"):
-            zarrpath = dataset_name.removeprefix("zarr://")
-            ds = xr.open_zarr(
-                zarrpath,
-                group=args.group or None,
-                consolidated=None,
-                chunks="auto",
-            )
-        else:
-            ds = get_dataset_for_name(dataset_name, args.branch, args.group, args.cache)
-        print(ds)
-        rest = xpublish.SingleDatasetRest(
-            ds,
-            plugins={"tiles": TilesPlugin(), "wms": WMSPlugin()},
+    if dataset_name.startswith("zarr://"):
+        zarrpath = dataset_name.removeprefix("zarr://")
+        ds = xr.open_zarr(
+            zarrpath,
+            consolidated=None,
+            chunks="auto",
         )
-        rest.app.add_middleware(CORSMiddleware, allow_origins=["*"])
+        
+        # make t2m into celsius if it exists
+        if "t2m" in ds:
+            ds["t2m"] = ds["t2m"] - 273.15
+            ds["t2m"].attrs["units"] = "Celsius"
+            ds["t2m"].attrs["long_name"] = "2 metre temperature"
+            
+        # add windspeed from u10m and v10m if they exist
+        if "u10m" in ds and "v10m" in ds:
+            ds["ws10m"] = (ds["u10m"]**2 + ds["v10m"]**2) ** 0.5
+            ds["ws10m"].attrs["units"] = ds["u10m"].attrs.get("units", "")
+            ds["ws10m"].attrs["long_name"] = "10 metre windspeed"
+    else:
+        raise NotImplementedError(
+            "Only zarr:// datasets are supported in this simplified main.py"
+        )
+    rest = xpublish.SingleDatasetRest(
+        ds,
+        plugins={"tiles": TilesPlugin(), "wms": WMSPlugin()},
+    )
+    rest.app.add_middleware(CORSMiddleware, allow_origins=["*"])
 
-    if benchmarking:
-        if args.spy:
-            # For spy mode, run single dataset benchmark and output JSON
-            result = _run_single_dataset_benchmark(dataset_name, args)
-            if result:
-                failed_count = result.get("failed", 0)
-                if failed_count > 0:
-                    print(f"🔴 WARNING: {failed_count} failed requests detected!")
-                else:
-                    print("🟢 All requests completed successfully!")
-            print("BENCHMARK_RESULT_JSON:", json.dumps(result))
-        else:
-            # Regular --bench mode (legacy threading approach)
-            dataset_obj = get_dataset_object_for_name(dataset_name)
-            if dataset_obj and dataset_obj.benchmark_tiles:
-                benchmark_tiles = dataset_obj.benchmark_tiles
-            else:
-                warnings.warn(
-                    "Unknown dataset; using global tiles", RuntimeWarning, stacklevel=2
-                )
-                benchmark_tiles = GLOBAL_BENCHMARK_TILES
-
-            if not ds.data_vars:
-                raise ValueError(f"No data variables found in dataset '{dataset_name}'")
-            first_var = next(iter(ds.data_vars))
-
-            needs_colorscale = (
-                "valid_min" not in ds[first_var].attrs
-                or "valid_max" not in ds[first_var].attrs
-            )
-
-            bench_thread = threading.Thread(
-                target=run_benchmark,
-                args=(
-                    args.port,
-                    "requests",
-                    dataset_name,
-                    benchmark_tiles,
-                    args.concurrency,
-                    args.where,
-                    first_var,
-                    needs_colorscale,
-                ),
-                daemon=True,
-            )
-            bench_thread.start()
-
-            if args.where == "local":
-                rest.serve(host="0.0.0.0", port=args.port)
-            elif args.where in ["local-booth", "arraylake-prod", "arraylake-dev"]:
-                bench_thread.join()
-    elif args.where == "local":
-        rest.serve(host="0.0.0.0", port=args.port)
+    rest.serve(host="0.0.0.0", port=args.port)
 
 
 if __name__ == "__main__":
